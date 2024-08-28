@@ -16,7 +16,7 @@ import pandas as pd
 """"""""""""""""""""" VALUES TO ADJUST """""""""""""""""""""
 
 API_KEY = ''  # GET YOUR API-KEY FOR FREE ON https://emoji-api.com/
-LANGUAGE = 'NL'  # SEE OPTIONS BELOW
+LANGUAGE = 'EN'  # SEE OPTIONS BELOW
 
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
@@ -46,7 +46,10 @@ elif LANGUAGE == 'PT':  # Translation not confirmed
     deleted_message_warnings = ["Esta mensagem foi apagada", "Você apagou esta mensagem"]
 else:
     raise ValueError(f"Unsupported language code: {LANGUAGE}")
-    
+
+message_pattern = re.compile(r"(\d{1,2}/\d{1,2}/\d{2,4},?\s*\d{1,2}:\d{2}\s*([ap]m\s)?)- (.+?): (.+)", re.IGNORECASE)
+
+
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
 def extract_zip(zip_path, output_folder):
@@ -87,6 +90,18 @@ def add_emoji_names(emoji_dict, text):
 
     return emoji_pattern.sub(replace, text)
 
+def preprocess_datetime(datetime_str):
+    parts = datetime_str.split(' ')
+    time_part = parts[1]
+    hour, minute = time_part.split(':')
+    if len(hour) == 1:
+        hour = '0' + hour
+    time_part = f"{hour}:{minute}"
+    try:
+        return f"{parts[0]} {time_part} {parts[2]}"
+    except IndexError:
+        return f"{parts[0]} {time_part}"
+
 def slugify_filenames_in_folder(folder):
     slugified_filenames = {}
     for file in folder.iterdir():
@@ -102,27 +117,19 @@ def preprocess_chat_file(txt_file):
         lines = f.readlines()
 
     processed_lines = []
-    message_pattern = re.compile(r"(\d{1,2}/\d{1,2}/\d{4} \d{2}:\d{2}) - (.*?): (.*)")
-
     current_message = ""
+
     for line in lines:
         match = message_pattern.match(line)
+        
         if match:
-            # If a new message is found, process the current message and start a new one
             if current_message:
                 processed_lines.append(current_message.strip())
             
-            # Extract the date and reformat with leading zeros
-            datetime_str = match.group(1)
-            try:
-                datetime_obj = datetime.strptime(datetime_str, '%d/%m/%Y %H:%M')
-                reformatted_datetime_str = datetime_obj.strftime('%d/%m/%Y %H:%M')
-                current_message = line.replace(datetime_str, reformatted_datetime_str).strip()
-            except ValueError:
-                current_message = line.strip()
+            current_message = line.strip()
         else:
             current_message += " " + line.strip()
-
+    
     if current_message:
         processed_lines.append(current_message.strip())
 
@@ -138,16 +145,18 @@ def parse_whatsapp_chat(txt_file, attachments_folder):
     messages = []
     senders = set()
 
-    message_pattern = re.compile(r"(\d{1,2}/\d{1,2}/\d{4} \d{2}:\d{2}) - (.*?): (.*)")
-    slugified_filenames = slugify_filenames_in_folder(attachments_folder)
+    slugify_filenames_in_folder(attachments_folder)
+
     message_counts = {}
 
     emoji_dict = construct_emoji_dict()
 
     for line in lines:
+        print(f"line: {line}")
         match = message_pattern.match(line)
         if match:
-            datetime_str, sender, message = match.groups()
+
+            datetime_str, ampm, sender, message = match.groups()
             senders.add(sender)
             
             # Clean the message text
@@ -157,9 +166,29 @@ def parse_whatsapp_chat(txt_file, attachments_folder):
             message = add_emoji_names(emoji_dict, message)
             
             # Convert the datetime string to the desired folder name format: yyyymmddhhmm
-            datetime_obj = datetime.strptime(datetime_str, '%d/%m/%Y %H:%M')
+            datetime_obj = None
+
+            formatted_str = preprocess_datetime(datetime_str.strip())
+
+            formats = [
+                '%d/%m/%Y %H:%M',      # Day/Month/Year Hour:Minute = NL pattern
+                '%m/%d/%y, %I:%M %p',  # Month/Day/Year, Hour:Minute AM/PM = EN pattern
+            ]
+
+            for fmt in formats:
+                try:
+                    datetime_obj = datetime.strptime(formatted_str, fmt)
+                    break
+                except ValueError:
+                    continue
+
+            if datetime_obj is None:
+                continue
+                print("Datetime pattern not recognised. Skipping line...")
+
+            # Create a standardized folder name
             folder_name = datetime_obj.strftime('%Y%m%d%H%M')
-            
+
             # Generate a unique ID based on datetime and message count
             message_count = message_counts.get(datetime_str, 0) + 1
             message_counts[datetime_str] = message_count
@@ -219,7 +248,10 @@ def create_csv(conversation_name, messages, senders, output_csv, attachments_fol
             writer.writerow(row)
 
 def create_summary_csv(conversation_name, messages, senders, summary_csv):
-    """Create a summary CSV file with chat statistics in the specified format."""
+    if not messages:
+        print("No messages found. Summary CSV will not be created.")
+        return
+    
     summary_data = {
         'EarliestMessageDate': [min(msg[1] for msg in messages)],
         'LatestMessageDate': [max(msg[1] for msg in messages)],
@@ -397,10 +429,10 @@ def process_whatsapp_zip(zip_path):
     for item in folder.iterdir():
         if item.name != f"{zip_path.stem}.txt" and item.is_file():
             item.rename(attachments_folder / item.name)
-       
+
     # Slugify all filenames in the attachments folder and create a map for reference
     slugify_filenames_in_folder(attachments_folder)
-    
+
     # Parse the WhatsApp chat
     messages, senders = parse_whatsapp_chat(txt_file, attachments_folder)
     

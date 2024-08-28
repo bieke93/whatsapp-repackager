@@ -6,7 +6,7 @@ This script is a simple tool (first attempt) to repackage WhatsApp conversations
 
 1. **Download and Open the Code**: Clone or download the repository containing this script.
 2. **Get a Free API Key**: Obtain a free API key from [Emoji API](https://emoji-api.com/). Add it in the upper part of the script.
-3. **Set the Export Language**: Ensure that the language of your WhatsApp export (based on the App language of who made the export) is set correctly. This is necessary for identifying references to deleted messages and attachments in messages.
+3. **Set the Export Language**: Ensure that the language of your WhatsApp export (based on the App language of who made the export) is set correctly. This is necessary for identifying references to deleted messages and attachments in messages. (Note: when using other languages than EN of NL, it might be necessary to adjust the datetime-patterns on lines 173-176.)
 4. **Install Required Packages**: If not already installed, make sure to install the following Python packages:
    - `pandas`
    - `requests`
