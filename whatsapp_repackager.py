@@ -50,12 +50,10 @@ else:
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
 def extract_zip(zip_path, output_folder):
-    """Extract the ZIP file to the output folder."""
     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
         zip_ref.extractall(output_folder)
 
 def clean_message_text(text):
-    """Remove unwanted characters like 'â€Ž' from the message text."""
     return text.replace("â€Ž", "").strip()
 
 def construct_emoji_dict():
@@ -67,7 +65,6 @@ def construct_emoji_dict():
         return emoji_dict
 
 def add_emoji_names(emoji_dict, text):
-    """Replace emojis in the text with their names in square brackets."""
     emoji_pattern = re.compile(
         u'[\U0001F600-\U0001F64F|'
         u'\U0001F300-\U0001F5FF|'
@@ -91,7 +88,6 @@ def add_emoji_names(emoji_dict, text):
     return emoji_pattern.sub(replace, text)
 
 def slugify_filenames_in_folder(folder):
-    """Slugify all filenames in the given folder and return a mapping of original to slugified names."""
     slugified_filenames = {}
     for file in folder.iterdir():
         if file.is_file():
@@ -102,7 +98,6 @@ def slugify_filenames_in_folder(folder):
     return slugified_filenames
 
 def preprocess_chat_file(txt_file):
-    """Modify the txt file so that lines not starting with a date and time are appended to the previous line."""
     with open(txt_file, 'r', encoding='utf-8') as f:
         lines = f.readlines()
 
@@ -110,7 +105,6 @@ def preprocess_chat_file(txt_file):
     message_pattern = re.compile(r"(\d{1,2}/\d{1,2}/\d{4} \d{2}:\d{2}) - (.*?): (.*)")
 
     current_message = ""
-
     for line in lines:
         match = message_pattern.match(line)
         if match:
@@ -123,21 +117,15 @@ def preprocess_chat_file(txt_file):
             try:
                 datetime_obj = datetime.strptime(datetime_str, '%d/%m/%Y %H:%M')
                 reformatted_datetime_str = datetime_obj.strftime('%d/%m/%Y %H:%M')
-                
-                # Replace the datetime in the line with the reformatted one
                 current_message = line.replace(datetime_str, reformatted_datetime_str).strip()
             except ValueError:
-                # If the date format is not as expected, keep it as is
                 current_message = line.strip()
         else:
-            # Append continuation lines to the current message
             current_message += " " + line.strip()
 
-    # Append the last message
     if current_message:
         processed_lines.append(current_message.strip())
 
-    # Write the processed lines back to the file
     with open(txt_file, 'w', encoding='utf-8') as f:
         f.write('\n'.join(processed_lines))
 
@@ -150,16 +138,10 @@ def parse_whatsapp_chat(txt_file, attachments_folder):
     messages = []
     senders = set()
 
-    # Regex to match WhatsApp message pattern: date - sender: message
     message_pattern = re.compile(r"(\d{1,2}/\d{1,2}/\d{4} \d{2}:\d{2}) - (.*?): (.*)")
-    
-    # Slugify filenames and create a mapping of original to slugified names
     slugified_filenames = slugify_filenames_in_folder(attachments_folder)
-
-    # Track message counts to ensure unique IDs
     message_counts = {}
 
-    # Construct emoji-dictionary from API for adding their name (description)
     emoji_dict = construct_emoji_dict()
 
     for line in lines:
@@ -185,14 +167,16 @@ def parse_whatsapp_chat(txt_file, attachments_folder):
                       
             # Check if the message references attachments
             if "(" + attachment_indicator + ")" in message:
+
                 # Create a folder named after the message_id
                 attachment_folder = attachments_folder / message_id
                 if not attachment_folder.exists():
                     attachment_folder.mkdir(parents=True, exist_ok=True)
 
-                # Find all attachment names in the message, allowing for spaces
+                # Find all attachment names in the message
                 attachment_names_unslugified = re.findall(r"([\S ]+)\s\(bestand bijgevoegd\)", message)
                 for attachment_name_unslugified in attachment_names_unslugified:
+
                     # Create slugified name
                     slugified_name = slugify(Path(attachment_name_unslugified).stem) + Path(attachment_name_unslugified).suffix
                     
@@ -220,18 +204,15 @@ def parse_whatsapp_chat(txt_file, attachments_folder):
     return messages, sorted(senders)
 
 def create_csv(conversation_name, messages, senders, output_csv, attachments_folder):
-    """Create the CSV file based on parsed messages."""
     with open(output_csv, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         
-        # Create header with one column for conversation name, message ID, date-time, attachment folder, and one for each sender
         header = ['ConversationName', 'MessageID', 'DateTime', 'AttachmentFolder'] + list(senders)
         writer.writerow(header)
         
         for msg in messages:
             message_id, datetime_str, sender, message, attachment_folder = msg
             
-            # Create a row with the appropriate message in the right sender column
             row = [conversation_name, message_id, datetime_str, f'=HYPERLINK("{attachments_folder}\\{attachment_folder}")' if attachment_folder else ''] + ['' for _ in senders]
             if sender in senders:
                 row[4 + senders.index(sender)] = message
@@ -247,7 +228,6 @@ def create_summary_csv(conversation_name, messages, senders, summary_csv):
         'TotalAttachments': [sum(1 for msg in messages if msg[4])]
     }
 
-    # Compute message and attachment statistics per participant
     participant_stats = defaultdict(lambda: {
         'messages': 0,
         'attachments': 0,
@@ -268,14 +248,12 @@ def create_summary_csv(conversation_name, messages, senders, summary_csv):
         summary_data[f'{sender}_FirstMessage'] = [stats['first_message']]
         summary_data[f'{sender}_LastMessage'] = [stats['last_message']]
     
-    # Write summary data to CSV
     with open(summary_csv, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         for key, value in summary_data.items():
             writer.writerow([key, value[0]])
 
 def create_excel_from_csv(csv_file, excel_file, summary_csv):
-    """Create an Excel file from the CSV file with colored cells based on sender and pie chart."""
     
     # Load CSV file
     with open(csv_file, 'r', encoding='utf-8') as f:
@@ -308,6 +286,7 @@ def create_excel_from_csv(csv_file, excel_file, summary_csv):
             if col_num > 4:  # Message columns start from the 5th column
                 sender = headers[col_num-1]
                 if cell_value:
+
                     # Apply color fill for messages
                     cell.fill = sender_colors.get(sender)
 
@@ -344,7 +323,7 @@ def create_excel_from_csv(csv_file, excel_file, summary_csv):
         except ValueError:
             pass  # In case the value isn't a valid integer, do nothing
 
-    # Create a temporary table for pie chart data
+    # Create a helper table for pie chart data
     temp_table_start_row = 18
     temp_table_start_col = 6
     ws_summary.cell(row=temp_table_start_row - 1, column=temp_table_start_col, value="Participant")
@@ -367,7 +346,7 @@ def create_excel_from_csv(csv_file, excel_file, summary_csv):
     pie_chart.set_categories(labels)
     pie_chart.title = "Message Distribution by Participant"
     
-    # Add the pie chart to the "Summary" worksheet in cell E2
+    # Add the pie chart to the "Summary" worksheet
     ws_summary.add_chart(pie_chart, "E2")
 
     # Save the Excel file
@@ -375,7 +354,6 @@ def create_excel_from_csv(csv_file, excel_file, summary_csv):
     print(f"Excel file '{excel_file}' has been created.")
 
 def assign_colors_to_senders(senders):
-    """Assign a unique color to each sender."""
     color_palette = [
         "FFCCCC", "CCFFCC", "CCCCFF", "FFFFCC", "FFCCFF", "CCFFFF", "FFD700", 
         "FF69B4", "87CEFA", "98FB98", "FFDAB9", "FFA07A", "D3D3D3"
@@ -387,7 +365,6 @@ def assign_colors_to_senders(senders):
     return sender_colors
 
 def process_whatsapp_zip(zip_path):
-    """Main function to process the WhatsApp zip file."""
     zip_path = Path(zip_path)
     output_folder = zip_path.parent / zip_path.stem
     
@@ -395,7 +372,7 @@ def process_whatsapp_zip(zip_path):
     if output_folder.exists():
         user_choice = input(f"The folder '{output_folder}' already exists. Do you want to delete it and continue? (yes/no): ").strip().lower()
         if user_choice == 'yes':
-            shutil.rmtree(output_folder)  # Delete the folder and its contents
+            shutil.rmtree(output_folder)
             print(f"The folder '{output_folder}' has been deleted.")
         else:
             print("Operation canceled by the user.")
@@ -407,10 +384,10 @@ def process_whatsapp_zip(zip_path):
     # Create the output folder
     output_folder.mkdir(exist_ok=True)
     
-    # Step 1: Extract the ZIP file
+    # Extract the ZIP file
     extract_zip(zip_path, output_folder)
     
-    # Step 2: Find the txt file and attachments
+    # Find the txt file and attachments
     txt_file = output_folder / f"{zip_path.stem}.txt"
     attachments_folder = output_folder / 'attachments'
     attachments_folder.mkdir(exist_ok=True)
@@ -421,30 +398,29 @@ def process_whatsapp_zip(zip_path):
         if item.name != f"{zip_path.stem}.txt" and item.is_file():
             item.rename(attachments_folder / item.name)
        
-    # Step 3: Slugify all filenames in the attachments folder and create a map for reference
+    # Slugify all filenames in the attachments folder and create a map for reference
     slugify_filenames_in_folder(attachments_folder)
     
-    # Step 4: Parse the WhatsApp chat
+    # Parse the WhatsApp chat
     messages, senders = parse_whatsapp_chat(txt_file, attachments_folder)
     
-    # Step 5: Create the CSV file
+    # Create the CSV file
     output_csv = output_folder / f"{zip_path.stem}.csv"
     create_csv(conversation_name, messages, senders, output_csv, attachments_folder)
     
-    # Step 6: Create the summary CSV file
+    # Create the summary CSV file
     output_summary_csv = output_folder / f"{zip_path.stem}_summary.csv"
     create_summary_csv(conversation_name, messages, senders, output_summary_csv)
     
-    # Step 7: Create the Excel file with pie chart
+    # Create the Excel file with pie chart
     excel_file = output_folder / f"{zip_path.stem}.xlsx"
     create_excel_from_csv(output_csv, excel_file, output_summary_csv)
     
     print(f"Processing complete. Output saved to {output_folder}")
 
 if __name__ == "__main__":
-    # Prompt the user for the ZIP file path
     zip_file_path = input("Enter the path to the WhatsApp ZIP file: ").strip().replace('"','')
     process_whatsapp_zip(zip_file_path)
 
 
-""" Script written with aid of AI """
+""" AI assistance was used during the development of this script. """
