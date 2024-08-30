@@ -48,6 +48,8 @@ This script is a simple tool (first attempt) to repackage WhatsApp conversations
 - Add an anonymization option
 - Add an option to include additional contact details
 - Add an option of integrating several zip's
+- Add METS file
+- Add additional (optional) output formats: json, db (e.g. sqlite)...
 
 ## License
 

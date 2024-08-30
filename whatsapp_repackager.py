@@ -16,39 +16,7 @@ import pandas as pd
 """"""""""""""""""""" VALUES TO ADJUST """""""""""""""""""""
 
 API_KEY = ''  # GET YOUR API-KEY FOR FREE ON https://emoji-api.com/
-LANGUAGE = 'EN'  # SEE OPTIONS BELOW
-
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-attachment_indicator = ""
-deleted_message_warnings = []
-
-if LANGUAGE == 'EN':  # Translation confirmed 28.8.2024
-    attachment_indicator = "file attached"
-    deleted_message_warnings = ["This message was deleted", "You deleted this message"]
-elif LANGUAGE == 'FR':  # Translation confirmed 28.8.2024
-    attachment_indicator = "fichier joint"
-    deleted_message_warnings = ["Ce message a été supprimé", "Vous avez supprimé ce message"]
-elif LANGUAGE == 'NL':  # Translation confirmed 28.8.2024
-    attachment_indicator = "bestand bijgevoegd"
-    deleted_message_warnings = ["Dit bericht is verwijderd", "U hebt dit bericht verwijderd"]
-elif LANGUAGE == 'DE':  # Translation not confirmed
-    attachment_indicator = "Dateianhang"
-    deleted_message_warnings = ["Diese Nachricht wurde gelöscht", "Sie haben diese Nachricht gelöscht"]
-elif LANGUAGE == 'ES':  # Translation not confirmed
-    attachment_indicator = "archivo adjunto"
-    deleted_message_warnings = ["Este mensaje fue eliminado", "Has eliminado este mensaje"]
-elif LANGUAGE == 'IT':  # Translation not confirmed
-    attachment_indicator = "file allegato"
-    deleted_message_warnings = ["Questo messaggio è stato eliminato", "Hai eliminato questo messaggio"]
-elif LANGUAGE == 'PT':  # Translation not confirmed
-    attachment_indicator = "arquivo anexado"
-    deleted_message_warnings = ["Esta mensagem foi apagada", "Você apagou esta mensagem"]
-else:
-    raise ValueError(f"Unsupported language code: {LANGUAGE}")
-
-message_pattern = re.compile(r"(\d{1,2}/\d{1,2}/\d{2,4},?\s*\d{1,2}:\d{2}\s*([ap]m\s)?)- (.+?): (.+)", re.IGNORECASE)
-
+LANGUAGE = ''  # OPTIONS: 'EN', 'FR', 'NL', 'DE', 'ES', 'IT', 'PT'
 
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
@@ -149,10 +117,10 @@ def parse_whatsapp_chat(txt_file, attachments_folder):
 
     message_counts = {}
 
-    emoji_dict = construct_emoji_dict()
+    if emoji_translation:
+        emoji_dict = construct_emoji_dict()
 
     for line in lines:
-        print(f"line: {line}")
         match = message_pattern.match(line)
         if match:
 
@@ -163,7 +131,8 @@ def parse_whatsapp_chat(txt_file, attachments_folder):
             message = clean_message_text(message)
 
             # Add emoji names after emojis
-            message = add_emoji_names(emoji_dict, message)
+            if emoji_translation:
+                message = add_emoji_names(emoji_dict, message)
             
             # Convert the datetime string to the desired folder name format: yyyymmddhhmm
             datetime_obj = None
@@ -184,7 +153,6 @@ def parse_whatsapp_chat(txt_file, attachments_folder):
 
             if datetime_obj is None:
                 continue
-                print("Datetime pattern not recognised. Skipping line...")
 
             # Create a standardized folder name
             folder_name = datetime_obj.strftime('%Y%m%d%H%M')
@@ -249,7 +217,6 @@ def create_csv(conversation_name, messages, senders, output_csv, attachments_fol
 
 def create_summary_csv(conversation_name, messages, senders, summary_csv):
     if not messages:
-        print("No messages found. Summary CSV will not be created.")
         return
     
     summary_data = {
@@ -451,8 +418,54 @@ def process_whatsapp_zip(zip_path):
     print(f"Processing complete. Output saved to {output_folder}")
 
 if __name__ == "__main__":
-    zip_file_path = input("Enter the path to the WhatsApp ZIP file: ").strip().replace('"','')
-    process_whatsapp_zip(zip_file_path)
+    message_pattern = re.compile(r"(\d{1,2}/\d{1,2}/\d{2,4},?\s*\d{1,2}:\d{2}\s*([ap]m\s)?)- (.+?): (.+)", re.IGNORECASE)
+
+    emoji_translation = True
+    if not API_KEY:
+        proceed_with_no_key = input("No API key for adding emoji descriptions (https://emoji-api.com/) was added. Proceed without adding emoji descriptions? (yes/no): ").strip().lower()
+        if proceed_with_no_key == 'yes':
+            emoji_translation = False
+        else:
+            print("Operation canceled by the user.")
+    if API_KEY or not(emoji_translation):
+        zip_file_path = input("Enter the path to the WhatsApp ZIP file: ").strip().replace('"','')
+
+        while not(LANGUAGE):
+            language_input = input("No LANGUAGE was set in the script. What was the interface language of the export (recognisable by the reference to attachments, deleted messages...)? (EN/NL/FR/...): ").strip().upper()
+            if language_input in ['EN', 'FR', 'NL', 'DE', 'ES', 'IT', 'PT']:
+                LANGUAGE = language_input
+            else:
+                print("Unknown language. Please choose from the following languages (or add info for a new language in the script): 'EN', 'FR', 'NL', 'DE', 'ES', 'IT', 'PT'")
+        
+        attachment_indicator = ""
+        deleted_message_warnings = []
+        if LANGUAGE == 'EN':  # Translation confirmed 28.8.2024
+            attachment_indicator = "file attached"
+            deleted_message_warnings = ["This message was deleted", "You deleted this message"]
+        elif LANGUAGE == 'FR':  # Translation confirmed 28.8.2024
+            attachment_indicator = "fichier joint"
+            deleted_message_warnings = ["Ce message a été supprimé", "Vous avez supprimé ce message"]
+        elif LANGUAGE == 'NL':  # Translation confirmed 28.8.2024
+            attachment_indicator = "bestand bijgevoegd"
+            deleted_message_warnings = ["Dit bericht is verwijderd", "U hebt dit bericht verwijderd"]
+        elif LANGUAGE == 'DE':  # Translation not confirmed
+            attachment_indicator = "Dateianhang"
+            deleted_message_warnings = ["Diese Nachricht wurde gelöscht", "Sie haben diese Nachricht gelöscht"]
+        elif LANGUAGE == 'ES':  # Translation not confirmed
+            attachment_indicator = "archivo adjunto"
+            deleted_message_warnings = ["Este mensaje fue eliminado", "Has eliminado este mensaje"]
+        elif LANGUAGE == 'IT':  # Translation not confirmed
+            attachment_indicator = "file allegato"
+            deleted_message_warnings = ["Questo messaggio è stato eliminato", "Hai eliminato questo messaggio"]
+        elif LANGUAGE == 'PT':  # Translation not confirmed
+            attachment_indicator = "arquivo anexado"
+            deleted_message_warnings = ["Esta mensagem foi apagada", "Você apagou esta mensagem"]
+        else:
+            raise ValueError(f"Unsupported language code: {LANGUAGE}")
+
+        process_whatsapp_zip(zip_file_path)
+
+
 
 
 """ AI assistance was used during the development of this script. """
