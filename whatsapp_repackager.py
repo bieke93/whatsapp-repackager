@@ -12,6 +12,7 @@ from slugify import slugify
 from datetime import datetime
 from collections import defaultdict
 import pandas as pd
+import shortuuid
 
 """"""""""""""""""""" VALUES TO ADJUST """""""""""""""""""""
 
@@ -81,8 +82,12 @@ def slugify_filenames_in_folder(folder):
     return slugified_filenames
 
 def preprocess_chat_file(txt_file):
-    with open(txt_file, 'r', encoding='utf-8') as f:
-        lines = f.readlines()
+    try:
+        with open(txt_file, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        print("The zip-file appears to have been modified since export. Make sure to use an original zip-file.")
+        return
 
     processed_lines = []
     current_message = ""
@@ -104,7 +109,7 @@ def preprocess_chat_file(txt_file):
     with open(txt_file, 'w', encoding='utf-8') as f:
         f.write('\n'.join(processed_lines))
 
-def parse_whatsapp_chat(txt_file, attachments_folder):
+def parse_whatsapp_chat(txt_file, attachments_folder, pseudonymize):
     preprocess_chat_file(txt_file)
 
     with open(txt_file, 'r', encoding='utf-8') as f:
@@ -126,7 +131,7 @@ def parse_whatsapp_chat(txt_file, attachments_folder):
 
             datetime_str, ampm, sender, message = match.groups()
             senders.add(sender)
-            
+
             # Clean the message text
             message = clean_message_text(message)
 
@@ -198,24 +203,42 @@ def parse_whatsapp_chat(txt_file, attachments_folder):
             # Append the message and attachment folder (if any) to the messages list
             messages.append((message_id, datetime_str, sender, message, attachment_folder))
     
-    return messages, sorted(senders)
+    # Create pseudonym mapping (if applicable)
+    pseudonym_mapping = {}
+    if pseudonymize:
+        pseudonym_mapping = create_pseudonym_mapping(senders)
+    
+    return messages, sorted(senders), pseudonym_mapping
 
-def create_csv(conversation_name, messages, senders, output_csv, attachments_folder):
+def create_csv(conversation_name, messages, senders, output_csv, attachments_folder, pseudonymize, pseudonym_mapping):
+    if pseudonymize:
+        # Replace real names with pseudonyms in sender names
+        senders = [replace_names_by_pseudonymes(sender, pseudonym_mapping) for sender in senders]
+
     with open(output_csv, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         
-        header = ['ConversationName', 'MessageID', 'DateTime', 'AttachmentFolder'] + list(senders)
+        # Add pseudonymized sender names to header
+        header = ['ConversationName', 'MessageID', 'DateTime', 'AttachmentFolder'] + senders
         writer.writerow(header)
         
         for msg in messages:
             message_id, datetime_str, sender, message, attachment_folder = msg
             
+            if pseudonymize:
+                # Replace real names with pseudonyms in the message
+                message = replace_names_by_pseudonymes(message, pseudonym_mapping)
+                # Replace real sender names with pseudonyms
+                sender = replace_names_by_pseudonymes(sender, pseudonym_mapping)
+
             row = [conversation_name, message_id, datetime_str, f'=HYPERLINK("{attachments_folder}\\{attachment_folder}")' if attachment_folder else ''] + ['' for _ in senders]
-            if sender in senders:
-                row[4 + senders.index(sender)] = message
+
+            # Place the message in the correct sender column
+            row[4 + senders.index(sender)] = message
+
             writer.writerow(row)
 
-def create_summary_csv(conversation_name, messages, senders, summary_csv):
+def create_summary_csv(conversation_name, messages, senders, summary_csv, pseudonymize, pseudonym_mapping):
     if not messages:
         return
     
@@ -242,6 +265,7 @@ def create_summary_csv(conversation_name, messages, senders, summary_csv):
         participant_stats[sender]['last_message'] = datetime_str
 
     for sender, stats in participant_stats.items():
+        sender = pseudonym_mapping.get(sender, sender)
         summary_data[f'{sender}_Messages'] = [stats['messages']]
         summary_data[f'{sender}_Attachments'] = [stats['attachments']]
         summary_data[f'{sender}_FirstMessage'] = [stats['first_message']]
@@ -250,7 +274,33 @@ def create_summary_csv(conversation_name, messages, senders, summary_csv):
     with open(summary_csv, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         for key, value in summary_data.items():
-            writer.writerow([key, value[0]])
+            if pseudonymize:
+                writer.writerow([replace_names_by_pseudonymes(key, pseudonym_mapping), replace_names_by_pseudonymes(value[0],pseudonym_mapping)])
+            else:
+                writer.writerow([key, value[0]])
+
+def create_pseudonym_csv(pseudonym_mapping, output_folder):
+    pseudonym_csv = output_folder / "pseudonym_mapping.csv"
+    with open(pseudonym_csv, 'w', newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(['Real Name', 'Pseudonym'])
+        for real_name, pseudonym in pseudonym_mapping.items():
+            writer.writerow([real_name, pseudonym])
+    print(f"Pseudonym mapping '{pseudonym_csv}' has been created.")
+
+def create_pseudonymized_txt(txt_file, pseudonym_mapping, output_folder):
+    with open(txt_file, 'r', encoding='utf-8') as file:
+        content = file.read()
+    pseudonym_txt_file = output_folder / f"{txt_file.stem}_pseudonymized.txt"
+
+    # Replace the names in the entire content using the existing function
+    pseudonymized_content = replace_names_by_pseudonymes(content, pseudonym_mapping)
+
+    # Write the pseudonymized content to the output file
+    with open(pseudonym_txt_file, 'w', encoding='utf-8') as file:
+        file.write(pseudonymized_content)
+    
+    print(f"Pseudonymized text file '{pseudonym_txt_file}' has been created.")
 
 def create_excel_from_csv(csv_file, excel_file, summary_csv):
     
@@ -261,7 +311,7 @@ def create_excel_from_csv(csv_file, excel_file, summary_csv):
 
     # Extract the headers and sender names
     headers = rows[0]
-    senders = headers[4:]  # Senders start from the 5th column
+    senders = headers[4:]
     sender_colors = assign_colors_to_senders(senders)
     
     # Create a new Excel workbook and sheet
@@ -287,7 +337,7 @@ def create_excel_from_csv(csv_file, excel_file, summary_csv):
                 if cell_value:
 
                     # Apply color fill for messages
-                    cell.fill = sender_colors.get(sender)
+                    cell.fill = sender_colors.get(sender, PatternFill())
 
                     # Special formatting for deleted messages
                     if "***Deleted message***" in cell_value:
@@ -363,7 +413,7 @@ def assign_colors_to_senders(senders):
         sender_colors[sender] = PatternFill(start_color=color, end_color=color, fill_type="solid")
     return sender_colors
 
-def process_whatsapp_zip(zip_path):
+def process_whatsapp_zip(zip_path, pseudonymize):
     zip_path = Path(zip_path)
     output_folder = zip_path.parent / zip_path.stem
     
@@ -401,21 +451,41 @@ def process_whatsapp_zip(zip_path):
     slugify_filenames_in_folder(attachments_folder)
 
     # Parse the WhatsApp chat
-    messages, senders = parse_whatsapp_chat(txt_file, attachments_folder)
-    
+    messages, senders, pseudonym_mapping = parse_whatsapp_chat(txt_file, attachments_folder, pseudonymize)
+
+    suffix = "_pseudonymized" if pseudonymize else ""
+
     # Create the CSV file
-    output_csv = output_folder / f"{zip_path.stem}.csv"
-    create_csv(conversation_name, messages, senders, output_csv, attachments_folder)
+    output_csv = output_folder / f"{zip_path.stem}{suffix}.csv"
+    create_csv(conversation_name, messages, senders, output_csv, attachments_folder, pseudonymize, pseudonym_mapping)
     
     # Create the summary CSV file
-    output_summary_csv = output_folder / f"{zip_path.stem}_summary.csv"
-    create_summary_csv(conversation_name, messages, senders, output_summary_csv)
+    output_summary_csv = output_folder / f"{zip_path.stem}_summary{suffix}.csv"
+    create_summary_csv(conversation_name, messages, senders, output_summary_csv, pseudonymize, pseudonym_mapping)
     
     # Create the Excel file with pie chart
-    excel_file = output_folder / f"{zip_path.stem}.xlsx"
+    excel_file = output_folder / f"{zip_path.stem}{suffix}.xlsx"
     create_excel_from_csv(output_csv, excel_file, output_summary_csv)
+
+    if pseudonymize:
+        create_pseudonymized_txt(txt_file, pseudonym_mapping, output_folder)
+        create_pseudonym_csv(pseudonym_mapping, output_folder)
     
     print(f"Processing complete. Output saved to {output_folder}")
+    if pseudonymize:
+        print("Warning: Although the senders's names have been pseudonymized, other names are not and senders may still be identifyable based on metadata and/or message content.")
+
+def create_pseudonym_mapping(senders):
+    pseudonym_mapping = {}
+    for sender in senders:
+        if sender not in pseudonym_mapping:
+            pseudonym_mapping[sender] = shortuuid.ShortUUID().random(length=6)
+    return pseudonym_mapping            
+            
+def replace_names_by_pseudonymes(text, mapping):
+    for real_name, pseudonym in mapping.items():
+        text = str(text).replace(real_name, pseudonym)
+    return text
 
 if __name__ == "__main__":
     message_pattern = re.compile(r"(\d{1,2}/\d{1,2}/\d{2,4},?\s*\d{1,2}:\d{2}\s*([ap]m\s)?)- (.+?): (.+)", re.IGNORECASE)
@@ -430,8 +500,16 @@ if __name__ == "__main__":
     if API_KEY or not(emoji_translation):
         zip_file_path = input("Enter the path to the WhatsApp ZIP file: ").strip().replace('"','')
 
+        pseudonymize_option = ""
+        while not pseudonymize_option:
+                pseudonymize_option = input("Would you like to pseudonymize senders' names? (yes/no): ").lower()
+                if pseudonymize_option == 'yes':
+                    pseudonymize = True
+                elif pseudonymize_option == "no":
+                    pseudonymize = False
+        
         while not(LANGUAGE):
-            language_input = input("No LANGUAGE was set in the script. What was the interface language of the export (recognisable by the reference to attachments, deleted messages...)? (EN/NL/FR/...): ").strip().upper()
+            language_input = input("No LANGUAGE was set in the script. What was the interface language of the export? (EN, NL, FR...): ").strip().upper()
             if language_input in ['EN', 'FR', 'NL', 'DE', 'ES', 'IT', 'PT']:
                 LANGUAGE = language_input
             else:
@@ -463,9 +541,7 @@ if __name__ == "__main__":
         else:
             raise ValueError(f"Unsupported language code: {LANGUAGE}")
 
-        process_whatsapp_zip(zip_file_path)
-
-
+        process_whatsapp_zip(zip_file_path, pseudonymize)
 
 
 """ AI assistance was used during the development of this script. """
