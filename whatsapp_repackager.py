@@ -1,8 +1,12 @@
 import zipfile
 import csv
+import json
 import re
+import os
 import shutil
 import requests
+import pandas as pd
+import shortuuid
 import openpyxl
 from openpyxl.styles import PatternFill, Font
 from openpyxl.utils.dataframe import dataframe_to_rows
@@ -11,13 +15,15 @@ from pathlib import Path
 from slugify import slugify
 from datetime import datetime
 from collections import defaultdict
-import pandas as pd
-import shortuuid
 
-""""""""""""""""""""" VALUES TO ADJUST """""""""""""""""""""
+""""""""""""""""""""" PARAMETERS TO ADJUST """""""""""""""""""""
 
-API_KEY = ''  # GET YOUR API-KEY FOR FREE ON https://emoji-api.com/
-LANGUAGE = ''  # OPTIONS: 'EN', 'FR', 'NL', 'DE', 'ES', 'IT', 'PT'
+EMOJIDESCRIPTION = 'Ask'  # Options: 'Yes' (add descriptions for emoji) / 'No' (don't add descriptions for emoji) / 'Ask' (choose each time you run the script)
+API_KEY = 'Ask'           # Options: '[your API-key]' (get it for free at https://emoji-api.com/) / 'Ask' (choose each time you run the script)
+LANGUAGE = 'Ask'          # Options: 'en', 'fr', 'nl', 'de', 'es', 'it', 'pt' (language of the application at the time of export) / 'Ask' (choose each time you run the script)
+PSYDONYMIZE = 'Ask'       # Options: 'Yes' (to use participants's real names in all output files) / 'No' (to use pseudonymes all output files - the original txt-file will not be modified) / 'Ask' (choose each time you run the script)
+FILE_TYPES = 'Ask'        # Options: 'csv', 'xlsx', 'json' / a combination separated by comma's like 'csv, xlsx, json'/ 'Ask' (choose each time you run the script)
+OPEN_WHEN_FINISHED = 'Ask'# Options: 'Yes' (open the output folder on completion) / 'No' (don't open the output folder on completion) / 'Ask' (choose each time you run the script)
 
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
@@ -30,7 +36,7 @@ def clean_message_text(text):
 
 def construct_emoji_dict():
     API_URL = 'https://emoji-api.com/emojis?access_key={}'
-    response = requests.get(API_URL.format(API_KEY))
+    response = requests.get(API_URL.format(api_key))
     if response.status_code == requests.codes.ok:
         data = response.json()
         emoji_dict = {item['character']: item['unicodeName'] for item in data}
@@ -122,7 +128,7 @@ def parse_whatsapp_chat(txt_file, attachments_folder, pseudonymize):
 
     message_counts = {}
 
-    if emoji_translation:
+    if emoji_description:
         emoji_dict = construct_emoji_dict()
 
     for line in lines:
@@ -136,7 +142,7 @@ def parse_whatsapp_chat(txt_file, attachments_folder, pseudonymize):
             message = clean_message_text(message)
 
             # Add emoji names after emojis
-            if emoji_translation:
+            if emoji_description:
                 message = add_emoji_names(emoji_dict, message)
             
             # Convert the datetime string to the desired folder name format: yyyymmddhhmm
@@ -204,13 +210,11 @@ def parse_whatsapp_chat(txt_file, attachments_folder, pseudonymize):
             messages.append((message_id, datetime_str, sender, message, attachment_folder))
     
     # Create pseudonym mapping (if applicable)
-    pseudonym_mapping = {}
-    if pseudonymize:
-        pseudonym_mapping = create_pseudonym_mapping(senders)
+    pseudonym_mapping = create_pseudonym_mapping(senders)
     
     return messages, sorted(senders), pseudonym_mapping
 
-def create_csv(conversation_name, messages, senders, output_csv, attachments_folder, pseudonymize, pseudonym_mapping):
+def create_csv(conversation_name, messages, senders, output_csv, attachments_folder, pseudonym_mapping):
     if pseudonymize:
         # Replace real names with pseudonyms in sender names
         senders = [replace_names_by_pseudonymes(sender, pseudonym_mapping) for sender in senders]
@@ -238,7 +242,13 @@ def create_csv(conversation_name, messages, senders, output_csv, attachments_fol
 
             writer.writerow(row)
 
-def create_summary_csv(conversation_name, messages, senders, summary_csv, pseudonymize, pseudonym_mapping):
+        if "csv" in file_types:
+            if pseudonymize:
+                print(f"\u2713 Pseudonymized csv file created: '{output_csv}'")
+            else:
+                print(f"\u2713 Csv file created: '{output_csv}'")
+
+def create_summary_csv(conversation_name, messages, senders, summary_csv, pseudonym_mapping):
     if not messages:
         return
     
@@ -286,7 +296,7 @@ def create_pseudonym_csv(pseudonym_mapping, output_folder):
         writer.writerow(['Real Name', 'Pseudonym'])
         for real_name, pseudonym in pseudonym_mapping.items():
             writer.writerow([real_name, pseudonym])
-    print(f"Pseudonym mapping '{pseudonym_csv}' has been created.")
+    print(f"\u2713 Pseudonym mapping csv created: '{pseudonym_csv}'")
 
 def create_pseudonymized_txt(txt_file, pseudonym_mapping, output_folder):
     with open(txt_file, 'r', encoding='utf-8') as file:
@@ -300,7 +310,37 @@ def create_pseudonymized_txt(txt_file, pseudonym_mapping, output_folder):
     with open(pseudonym_txt_file, 'w', encoding='utf-8') as file:
         file.write(pseudonymized_content)
     
-    print(f"Pseudonymized text file '{pseudonym_txt_file}' has been created.")
+    print(f"\u2713 Pseudonymized text file created: '{pseudonym_txt_file}'")
+
+def create_json_from_csv(csv_file, json_file, pseudonymize=False):
+    data = []
+
+    with open(csv_file, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            conversation_name = row.get("ConversationName")
+            message_id = row.get("MessageID")
+            date_time = row.get("DateTime")
+            attachment_folder = row.get("AttachmentFolder")
+
+            # Iterate over each participant's message field
+            for participant, message in row.items():
+                if participant not in ["ConversationName", "MessageID", "DateTime", "AttachmentFolder"] and message.strip():
+                    data.append({
+                        "ConversationName": conversation_name,
+                        "MessageID": message_id,
+                        "DateTime": date_time,
+                        "Name": participant,
+                        "Message": message
+                    })
+
+    with open(json_file, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+    if pseudonymize:
+        print(f"\u2713 Pseudonymised json file created: '{json_file}'")
+    else:
+        print(f"\u2713 Json file created: '{json_file}'")
 
 def create_excel_from_csv(csv_file, excel_file, summary_csv):
     
@@ -400,7 +440,10 @@ def create_excel_from_csv(csv_file, excel_file, summary_csv):
 
     # Save the Excel file
     wb.save(excel_file)
-    print(f"Excel file '{excel_file}' has been created.")
+    if pseudonymize:
+        print(f"\u2713 Pseudonymized Excel file created: '{excel_file}'")
+    else:
+        print(f"\u2713 Excel file created: '{excel_file}'")
 
 def assign_colors_to_senders(senders):
     color_palette = [
@@ -419,10 +462,10 @@ def process_whatsapp_zip(zip_path, pseudonymize):
     
     # Check if the output folder already exists
     if output_folder.exists():
-        user_choice = input(f"The folder '{output_folder}' already exists. Do you want to delete it and continue? (yes/no): ").strip().lower()
+        user_choice = input(f"\u2022 The output folder already exists. Do you want to delete '{output_folder}' and continue? (yes/no): ").strip().lower()
         if user_choice == 'yes':
             shutil.rmtree(output_folder)
-            print(f"The folder '{output_folder}' has been deleted.")
+            print(f"\u2713 Deleted folder '{output_folder}'")
         else:
             print("Operation canceled by the user.")
             return
@@ -432,6 +475,7 @@ def process_whatsapp_zip(zip_path, pseudonymize):
     
     # Create the output folder
     output_folder.mkdir(exist_ok=True)
+    print(f"\u2713 Created folder '{output_folder}'")
     
     # Extract the ZIP file
     extract_zip(zip_path, output_folder)
@@ -446,6 +490,7 @@ def process_whatsapp_zip(zip_path, pseudonymize):
     for item in folder.iterdir():
         if item.name != f"{zip_path.stem}.txt" and item.is_file():
             item.rename(attachments_folder / item.name)
+    print(f"\u2713 Attachments moved to dedicated folder: '{output_folder}'")
 
     # Slugify all filenames in the attachments folder and create a map for reference
     slugify_filenames_in_folder(attachments_folder)
@@ -457,29 +502,57 @@ def process_whatsapp_zip(zip_path, pseudonymize):
 
     # Create the CSV file
     output_csv = output_folder / f"{zip_path.stem}{suffix}.csv"
-    create_csv(conversation_name, messages, senders, output_csv, attachments_folder, pseudonymize, pseudonym_mapping)
+    create_csv(conversation_name, messages, senders, output_csv, attachments_folder, pseudonym_mapping)
     
     # Create the summary CSV file
     output_summary_csv = output_folder / f"{zip_path.stem}_summary{suffix}.csv"
-    create_summary_csv(conversation_name, messages, senders, output_summary_csv, pseudonymize, pseudonym_mapping)
+    create_summary_csv(conversation_name, messages, senders, output_summary_csv, pseudonym_mapping)
     
+    # Create the JSON file
+    if "json" in file_types:
+        output_json = output_folder / f"{zip_path.stem}{suffix}.json"
+        create_json_from_csv(output_csv, output_json)
+
     # Create the Excel file with pie chart
-    excel_file = output_folder / f"{zip_path.stem}{suffix}.xlsx"
-    create_excel_from_csv(output_csv, excel_file, output_summary_csv)
+    if "xlsx" in file_types:
+        excel_file = output_folder / f"{zip_path.stem}{suffix}.xlsx"
+        create_excel_from_csv(output_csv, excel_file, output_summary_csv)
+
+    if not "csv" in file_types:
+        os.remove(output_csv)
 
     if pseudonymize:
         create_pseudonymized_txt(txt_file, pseudonym_mapping, output_folder)
         create_pseudonym_csv(pseudonym_mapping, output_folder)
     
-    print(f"Processing complete. Output saved to {output_folder}")
+    print(f"\033[92mProcessing complete. Output saved to '{output_folder}'\033[0m")
+
     if pseudonymize:
-        print("Warning: Although the senders's names have been pseudonymized, other names are not and senders may still be identifyable based on metadata and/or message content.")
+        print("\033[93mWarning: Although the sender's names have been pseudonymized, other names are not and senders may still be identifiable based on metadata and/or message content.\033[0m")
+
+    open_output_folder = False
+    if OPEN_WHEN_FINISHED == "yes":
+        open_output_folder = True
+    elif OPEN_WHEN_FINISHED != "no":
+        open_output_folder_valid_input = False
+        while not open_output_folder_valid_input:
+            open_output_folder_input = input("Open ouput folder? (yes/no): ").strip().lower()
+            if open_output_folder_input == "yes":
+                open_output_folder = True
+                open_output_folder_valid_input = True
+            elif open_output_folder_input == "no":
+                open_output_folder_valid_input = True
+            else:
+                print("Invalid input.")
+    if open_output_folder:
+        os.startfile(output_folder)
 
 def create_pseudonym_mapping(senders):
     pseudonym_mapping = {}
-    for sender in senders:
-        if sender not in pseudonym_mapping:
-            pseudonym_mapping[sender] = shortuuid.ShortUUID().random(length=6)
+    if pseudonymize:
+        for sender in senders:
+            if sender not in pseudonym_mapping:
+                pseudonym_mapping[sender] = shortuuid.ShortUUID().random(length=6)
     return pseudonym_mapping            
             
 def replace_names_by_pseudonymes(text, mapping):
@@ -489,59 +562,144 @@ def replace_names_by_pseudonymes(text, mapping):
 
 if __name__ == "__main__":
     message_pattern = re.compile(r"(\d{1,2}/\d{1,2}/\d{2,4},?\s*\d{1,2}:\d{2}\s*([ap]m\s)?)- (.+?): (.+)", re.IGNORECASE)
-
-    emoji_translation = True
-    if not API_KEY:
-        proceed_with_no_key = input("No API key for adding emoji descriptions (https://emoji-api.com/) was added. Proceed without adding emoji descriptions? (yes/no): ").strip().lower()
-        if proceed_with_no_key == 'yes':
-            emoji_translation = False
-        else:
-            print("Operation canceled by the user.")
-    if API_KEY or not(emoji_translation):
-        zip_file_path = input("Enter the path to the WhatsApp ZIP file: ").strip().replace('"','')
-
-        pseudonymize_option = ""
-        while not pseudonymize_option:
-                pseudonymize_option = input("Would you like to pseudonymize senders' names? (yes/no): ").lower()
-                if pseudonymize_option == 'yes':
-                    pseudonymize = True
-                elif pseudonymize_option == "no":
-                    pseudonymize = False
-        
-        while not(LANGUAGE):
-            language_input = input("No LANGUAGE was set in the script. What was the interface language of the export? (EN, NL, FR...): ").strip().upper()
-            if language_input in ['EN', 'FR', 'NL', 'DE', 'ES', 'IT', 'PT']:
-                LANGUAGE = language_input
+    
+    zip_file_path = input("\u2022 Enter the path to the WhatsApp ZIP file: ").strip().replace('"','')
+    
+    allowed_languages = ['EN', 'FR', 'NL', 'DE', 'ES', 'IT', 'PT']
+    if LANGUAGE.strip().upper() in allowed_languages:
+        language = LANGUAGE.strip().upper()
+    else:
+        valid_language_input = False
+        while not(valid_language_input):
+            language_input = input("\u2022 No language was set in the script. What was the interface language of the export? (en/fr/nl/de/es/it/pt): ").strip().upper()
+            if language_input in allowed_languages:
+                language = language_input
+                valid_language_input = True
             else:
-                print("Unknown language. Please choose from the following languages (or add info for a new language in the script): 'EN', 'FR', 'NL', 'DE', 'ES', 'IT', 'PT'")
-        
-        attachment_indicator = ""
-        deleted_message_warnings = []
-        if LANGUAGE == 'EN':  # Translation confirmed 28.8.2024
-            attachment_indicator = "file attached"
-            deleted_message_warnings = ["This message was deleted", "You deleted this message"]
-        elif LANGUAGE == 'FR':  # Translation confirmed 28.8.2024
-            attachment_indicator = "fichier joint"
-            deleted_message_warnings = ["Ce message a été supprimé", "Vous avez supprimé ce message"]
-        elif LANGUAGE == 'NL':  # Translation confirmed 28.8.2024
-            attachment_indicator = "bestand bijgevoegd"
-            deleted_message_warnings = ["Dit bericht is verwijderd", "U hebt dit bericht verwijderd"]
-        elif LANGUAGE == 'DE':  # Translation not confirmed
-            attachment_indicator = "Dateianhang"
-            deleted_message_warnings = ["Diese Nachricht wurde gelöscht", "Sie haben diese Nachricht gelöscht"]
-        elif LANGUAGE == 'ES':  # Translation not confirmed
-            attachment_indicator = "archivo adjunto"
-            deleted_message_warnings = ["Este mensaje fue eliminado", "Has eliminado este mensaje"]
-        elif LANGUAGE == 'IT':  # Translation not confirmed
-            attachment_indicator = "file allegato"
-            deleted_message_warnings = ["Questo messaggio è stato eliminato", "Hai eliminato questo messaggio"]
-        elif LANGUAGE == 'PT':  # Translation not confirmed
-            attachment_indicator = "arquivo anexado"
-            deleted_message_warnings = ["Esta mensagem foi apagada", "Você apagou esta mensagem"]
-        else:
-            raise ValueError(f"Unsupported language code: {LANGUAGE}")
+                print("Invalid input.")
+    
+    attachment_indicator = ""
+    deleted_message_warnings = []
+    if language.strip().upper() == 'EN':  # Translation confirmed 28.8.2024
+        attachment_indicator = "file attached"
+        deleted_message_warnings = ["This message was deleted", "You deleted this message"]
+    elif language.strip().upper() == 'FR':  # Translation confirmed 28.8.2024
+        attachment_indicator = "fichier joint"
+        deleted_message_warnings = ["Ce message a été supprimé", "Vous avez supprimé ce message"]
+    elif language.strip().upper() == 'NL':  # Translation confirmed 28.8.2024
+        attachment_indicator = "bestand bijgevoegd"
+        deleted_message_warnings = ["Dit bericht is verwijderd", "U hebt dit bericht verwijderd"]
+    elif language.strip().upper() == 'DE':  # Translation not confirmed
+        attachment_indicator = "Dateianhang"
+        deleted_message_warnings = ["Diese Nachricht wurde gelöscht", "Sie haben diese Nachricht gelöscht"]
+    elif language.strip().upper() == 'ES':  # Translation not confirmed
+        attachment_indicator = "archivo adjunto"
+        deleted_message_warnings = ["Este mensaje fue eliminado", "Has eliminado este mensaje"]
+    elif language.strip().upper() == 'IT':  # Translation not confirmed
+        attachment_indicator = "file allegato"
+        deleted_message_warnings = ["Questo messaggio è stato eliminato", "Hai eliminato questo messaggio"]
+    elif language.strip().upper() == 'PT':  # Translation not confirmed
+        attachment_indicator = "arquivo anexado"
+        deleted_message_warnings = ["Esta mensagem foi apagada", "Você apagou esta mensagem"]
+    else:
+        raise ValueError(f"Unsupported language code: {language}")
 
-        process_whatsapp_zip(zip_file_path, pseudonymize)
+    file_type_valid_input = False
+    allowed_file_types = ['csv', 'xlsx', 'json']
+    if FILE_TYPES.strip().lower() != "ask":
+        file_types = FILE_TYPES.split(",")
+        file_types = [type.strip().lower() for type in file_types]
+        invalid_type = False
+        for type in file_types:
+            if type not in allowed_file_types:
+                invalid_type = True
+                print("Invalid file types parameter. Check if all types in FILE_TYPES are allowed.")
+        if not invalid_type:
+            file_type_valid_input = True
+    else:
+        while not file_type_valid_input:    
+            file_types_input = input("\u2022 Which files do you want to generate? (csv, xlsx, json, multiple separated by commas, or enter for all): ").strip().lower()
+            if not file_types_input:
+                file_types = ['csv', 'xlsx', 'json']
+                file_type_valid_input = True
+            else:
+                file_types_input = file_types_input.split(",")
+                file_types_input = [type.strip().lower() for type in file_types_input]
+                invalid_type = False
+                for type in file_types_input:
+                    if type not in allowed_file_types:
+                        invalid_type = True
+                        print("Invalid input.")
+                if not invalid_type:
+                    file_types = file_types_input
+                    file_type_valid_input = True
+
+    if file_type_valid_input:
+
+        if PSYDONYMIZE.strip().lower() == "yes":
+            pseudonymize = True
+        elif PSYDONYMIZE.strip().lower() == "no":
+            pseudonymize = False
+        else:
+            pseudonymize_valid_input = False
+            while not pseudonymize_valid_input:
+                pseudonymize_input = input("\u2022 Would you like to pseudonymize senders' names? (yes/no): ").lower()
+                if pseudonymize_input == 'yes':
+                    pseudonymize = True
+                    pseudonymize_valid_input = True
+                elif pseudonymize_input == "no":
+                    pseudonymize = False
+                    pseudonymize_valid_input = True
+                else:
+                    print("Invalid input")
+
+        if EMOJIDESCRIPTION.strip().lower() == "no":
+            emoji_description = False
+        elif EMOJIDESCRIPTION.strip().lower() == "yes":
+            emoji_description = True
+        else:
+            emoji_description_valid_input = False
+            while not emoji_description_valid_input:
+                emoji_description_input = input("\u2022 Would you like to add emoji descriptions to the output files (requires api key)? (yes/no): ").lower()
+                if emoji_description_input == 'yes':
+                    emoji_description = True
+                    emoji_description_valid_input = True
+                elif emoji_description_input == "no":
+                    emoji_description = False
+                    emoji_description_valid_input = True
+                else:
+                    print("Invalid input.")
+
+        api_key = ""
+        if emoji_description:
+            api_pattern = r"^[0-9a-fA-F]{40}$"
+            if re.match(api_pattern, API_KEY) is None:
+                proceed_with_no_key_valid_input = False
+                while not proceed_with_no_key_valid_input:
+                    proceed_with_no_key = input("\u2022 No valid emoji api key was found in the script. Proceed without adding emoji descriptions? (yes/no): ").strip().lower()
+                    if proceed_with_no_key == 'yes':
+                        emoji_description = False
+                        proceed_with_no_key_valid_input = True
+                    elif proceed_with_no_key == 'no':
+                        enter_key_valid_input = False
+                        while not enter_key_valid_input:
+                            api_key_input = input("\u2022 Enter a valid key or hit enter to abort the operation: ").strip().lower()
+                            if not api_key_input:
+                                print("Operation canceled by the user.")
+                                enter_key_valid_input = True
+                                proceed_with_no_key_valid_input = True
+                            elif re.match(api_pattern, api_key_input) is None:
+                                print("Invalid key.")
+                            else:
+                                api_key = api_key_input
+                                enter_key_valid_input = True
+                                proceed_with_no_key_valid_input = True
+            else:
+                api_key = API_KEY              
+
+        if api_key or not(emoji_description):
+            process_whatsapp_zip(zip_file_path, pseudonymize)
+
 
 
 """ AI assistance was used during the development of this script. """
