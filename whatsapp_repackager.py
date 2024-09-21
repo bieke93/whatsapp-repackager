@@ -183,7 +183,7 @@ def parse_whatsapp_chat(txt_file, attachments_folder, pseudonymize):
                     attachment_folder.mkdir(parents=True, exist_ok=True)
 
                 # Find all attachment names in the message
-                attachment_names_unslugified = re.findall(r"([\S ]+)\s\(bestand bijgevoegd\)", message)
+                attachment_names_unslugified = re.findall(r"([\S ]+)\s\(" + attachment_indicator + r"\)", message)
                 for attachment_name_unslugified in attachment_names_unslugified:
 
                     # Create slugified name
@@ -197,7 +197,7 @@ def parse_whatsapp_chat(txt_file, attachments_folder, pseudonymize):
                         shutil.move(source_path, destination_path)
                     
                     # Replace references in the message with the slugified filename
-                    message = message.replace(f"{attachment_name_unslugified} (bestand bijgevoegd)", f"[{slugified_name}]")
+                    message = message.replace(f"{attachment_name_unslugified} ({attachment_indicator})", f"[{slugified_name}]")
             
                 attachment_folder = message_id
             else:
