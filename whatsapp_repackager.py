@@ -152,6 +152,7 @@ def parse_whatsapp_chat(txt_file, attachments_folder, pseudonymize):
 
             formats = [
                 '%d/%m/%Y %H:%M',      # Day/Month/Year Hour:Minute = NL pattern
+                '%d/%m/%y, %H:%M',      # Day/Month/Year Hour:Minute = IT pattern
                 '%m/%d/%y, %I:%M %p',  # Month/Day/Year, Hour:Minute AM/PM = EN pattern
             ]
 
